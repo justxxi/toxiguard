@@ -78,7 +78,7 @@ async def cmd_top_toxic(message: Message) -> None:
         return
 
     lines = [
-        f"{i}. {u['username'] or u['user_id']} — {u['count']}"
+        f"{i}. {u['username'] or 'аноним'} (id {u['user_id']}) — {u['count']}"
         for i, u in enumerate(top, start=1)
     ]
     await message.answer("\n".join(lines))

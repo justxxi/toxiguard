@@ -186,5 +186,17 @@ async def set_threshold(chat_id: int, threshold: float) -> float:
         return threshold
 
 
-async def log_incident(chat_id: int, user_id: int, text: str, score: float) -> None:
-    await add_event(chat_id=chat_id, user_id=user_id, username=None, score=score, category="toxicity")
+async def log_incident(
+    chat_id: int,
+    user_id: int,
+    text: str,
+    score: float,
+    username: Optional[str] = None,
+) -> None:
+    await add_event(
+        chat_id=chat_id,
+        user_id=user_id,
+        username=username,
+        score=score,
+        category="toxicity",
+    )

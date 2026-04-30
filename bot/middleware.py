@@ -26,11 +26,13 @@ class ToxicityMiddleware(BaseMiddleware):
         data["toxicity"] = scores
 
         if score >= WARN_THRESHOLD:
+            user = event.from_user
             await log_incident(
                 chat_id=event.chat.id,
-                user_id=event.from_user.id if event.from_user else 0,
+                user_id=user.id if user else 0,
                 text=event.text,
                 score=score,
+                username=(user.username or user.full_name) if user else None,
             )
             await self._enforce(event, score)
 
