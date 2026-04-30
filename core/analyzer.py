@@ -2,13 +2,10 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from functools import lru_cache
 from typing import TypedDict
 
 from detoxify import Detoxify
-
-log = logging.getLogger(__name__)
 
 # xlm-r checkpoint: en, ru, uk, de, fr, es, it, pt, tr
 MODEL_NAME = "multilingual"
@@ -22,7 +19,6 @@ class Scores(TypedDict):
 
 @lru_cache(maxsize=1)
 def _model() -> Detoxify:
-    log.info("загрузка модели Detoxify(%s)…", MODEL_NAME)
     return Detoxify(MODEL_NAME)
 
 def warmup() -> None:

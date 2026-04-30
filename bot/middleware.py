@@ -1,18 +1,16 @@
-#middleware
 from __future__ import annotations
 
-import logging
+from contextlib import suppress
 from typing import Any, Awaitable, Callable
 
 from aiogram import BaseMiddleware
+from aiogram.exceptions import TelegramAPIError
 from aiogram.types import Message
 
 from core.analyzer import analyze
 from core.database import log_incident
 
-log = logging.getLogger(__name__)
-
-WARN_THRESHOLD = 0.6
+WARN_THRESHOLD = 0.3
 BAN_THRESHOLD = 0.9
 
 class ToxicityMiddleware(BaseMiddleware):
@@ -43,10 +41,8 @@ class ToxicityMiddleware(BaseMiddleware):
     @staticmethod
     async def _enforce(event: Message, score: float) -> None:
         if score >= BAN_THRESHOLD:
-            try:
+            with suppress(TelegramAPIError):
                 await event.delete()
-            except Exception as exc:
-                log.warning("delete failed: %s", exc)
             return
 
         await event.reply(

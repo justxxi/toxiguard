@@ -17,7 +17,8 @@ from core.database import init_db
 
 async def main() -> None:
     load_dotenv()
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=logging.WARNING, format="%(message)s")
+    logging.getLogger("aiogram").setLevel(logging.WARNING)
 
     await init_db()
     warmup()
@@ -27,7 +28,7 @@ async def main() -> None:
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     dp = Dispatcher()
-    dp.message.middleware(ToxicityMiddleware())
+    dp.message.outer_middleware(ToxicityMiddleware())
     dp.include_router(router)
 
     await bot.delete_webhook(drop_pending_updates=True)

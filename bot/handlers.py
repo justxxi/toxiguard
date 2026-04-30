@@ -1,6 +1,6 @@
 ﻿#handlers
 from aiogram import Router
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
 from core.database import get_stats, add_warning, remove_warning, set_threshold
 
