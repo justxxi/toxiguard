@@ -47,6 +47,12 @@ class Warning_(Base):
     count: Mapped[int] = mapped_column(Integer, default=0)
     banned_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
+class ChatSettings(Base):
+    __tablename__ = "chat_settings"
+
+    chat_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    threshold: Mapped[float] = mapped_column(Float, default=0.75)
+
 engine = create_async_engine(DB_URL, echo=False)
 SessionLocal: async_sessionmaker[AsyncSession] = async_sessionmaker(
     engine, expire_on_commit=False
@@ -164,6 +170,17 @@ async def get_stats(chat_id: Optional[int] = None) -> dict:
             "by_category": by_category,
             "top_offenders": offenders,
         }
+
+async def set_threshold(chat_id: int, threshold: float) -> float:
+    threshold = max(0.0, min(1.0, threshold))
+    async with SessionLocal() as s:
+        row = await s.get(ChatSettings, chat_id)
+        if row is None:
+            s.add(ChatSettings(chat_id=chat_id, threshold=threshold))
+        else:
+            row.threshold = threshold
+        await s.commit()
+        return threshold
 
 async def log_incident(
     chat_id: int, user_id: int, text: str, score: float
