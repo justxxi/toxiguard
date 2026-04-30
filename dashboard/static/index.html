@@ -1,1 +1,522 @@
-﻿
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>toxiguard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400;500;600&family=Inter:wght@300;400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #f5f3ee;
+    --card: #fdfcf9;
+    --ink: #1a1a1a;
+    --muted: #8a8580;
+    --line: #e3ddd2;
+    --line-soft: #ece7df;
+    --accent: #1a1a1a;
+    --shadow: 0 1px 2px rgba(26,26,26,0.04), 0 8px 32px -12px rgba(26,26,26,0.08);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'Inter', system-ui, sans-serif;
+    font-weight: 300;
+    letter-spacing: 0.01em;
+    -webkit-font-smoothing: antialiased;
+  }
+  .app {
+    max-width: 1240px;
+    margin: 0 auto;
+    padding: 28px 28px 36px;
+  }
+
+  /* header */
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 4px 22px;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 22px;
+  }
+  .brand {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+  }
+  h1 {
+    font-family: 'Cormorant Garamond', serif;
+    font-weight: 500;
+    font-size: 32px;
+    margin: 0;
+    letter-spacing: 0.01em;
+  }
+  .tagline {
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: lowercase;
+    letter-spacing: 0.18em;
+  }
+  .controls { display: flex; gap: 10px; align-items: center; }
+  .input {
+    background: var(--card);
+    border: 1px solid var(--line);
+    color: var(--ink);
+    font-family: inherit;
+    font-size: 13px;
+    padding: 9px 14px;
+    border-radius: 999px;
+    outline: none;
+    transition: border-color .2s, box-shadow .2s;
+  }
+  .input:focus { border-color: var(--ink); box-shadow: 0 0 0 3px rgba(26,26,26,0.06); }
+  .input.chat { width: 200px; text-align: right; font-variant-numeric: tabular-nums; }
+  .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #c0bcb3; transition: background .3s;
+  }
+  .dot.live { background: #4a7c59; box-shadow: 0 0 0 0 rgba(74,124,89,0.5); animation: pulse 2s infinite; }
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(74,124,89,0.5); }
+    70% { box-shadow: 0 0 0 8px rgba(74,124,89,0); }
+    100% { box-shadow: 0 0 0 0 rgba(74,124,89,0); }
+  }
+
+  /* grid */
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(12, 1fr);
+    gap: 16px;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 20px 22px;
+    box-shadow: var(--shadow);
+    animation: fadeUp .5s ease both;
+  }
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .card.kpi { grid-column: span 3; padding: 18px 22px; }
+  .card.chart-line { grid-column: span 8; }
+  .card.chart-cat  { grid-column: span 4; }
+  .card.top        { grid-column: span 7; }
+  .card.settings   { grid-column: span 5; }
+
+  .card h2 {
+    font-family: 'Cormorant Garamond', serif;
+    font-weight: 500;
+    font-size: 18px;
+    margin: 0 0 14px;
+    text-transform: lowercase;
+    letter-spacing: 0.04em;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+  .card h2 .hint {
+    font-family: 'Inter', sans-serif;
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 0.14em;
+    text-transform: lowercase;
+  }
+
+  /* kpi */
+  .kpi .v {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 40px;
+    font-weight: 500;
+    line-height: 1;
+    transition: color .3s;
+  }
+  .kpi .l {
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: lowercase;
+    letter-spacing: 0.18em;
+    margin-top: 8px;
+  }
+  .kpi .delta {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 4px;
+  }
+
+  /* chart sizing */
+  .chart-line canvas { height: 220px !important; }
+  .chart-cat canvas  { height: 220px !important; }
+
+  /* table */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td {
+    text-align: left;
+    padding: 11px 6px;
+    border-bottom: 1px solid var(--line-soft);
+  }
+  tbody tr { transition: background .15s; }
+  tbody tr:hover { background: rgba(26,26,26,0.02); }
+  th {
+    font-weight: 400;
+    color: var(--muted);
+    text-transform: lowercase;
+    letter-spacing: 0.12em;
+    font-size: 10px;
+  }
+  td.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 18px;
+    font-weight: 500;
+  }
+  .rank {
+    display: inline-block;
+    width: 22px;
+    color: var(--muted);
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 15px;
+  }
+  .empty {
+    color: var(--muted);
+    font-style: italic;
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 16px;
+    text-align: center;
+    padding: 28px 8px;
+  }
+
+  /* settings */
+  .field { display: flex; flex-direction: column; gap: 8px; margin-bottom: 18px; }
+  .field-label {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: lowercase;
+    letter-spacing: 0.14em;
+  }
+  .field-label b {
+    font-family: 'Cormorant Garamond', serif;
+    font-weight: 500;
+    font-size: 22px;
+    color: var(--ink);
+    font-variant-numeric: tabular-nums;
+    transition: color .2s;
+  }
+  input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    background: transparent;
+    cursor: pointer;
+  }
+  input[type="range"]::-webkit-slider-runnable-track {
+    height: 2px; background: var(--line); border-radius: 2px;
+  }
+  input[type="range"]::-moz-range-track {
+    height: 2px; background: var(--line); border-radius: 2px;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 16px; height: 16px;
+    background: var(--ink);
+    border-radius: 50%;
+    margin-top: -7px;
+    transition: transform .15s, box-shadow .15s;
+  }
+  input[type="range"]::-webkit-slider-thumb:hover {
+    transform: scale(1.15);
+    box-shadow: 0 0 0 6px rgba(26,26,26,0.08);
+  }
+  input[type="range"]::-moz-range-thumb {
+    width: 16px; height: 16px;
+    background: var(--ink);
+    border: none;
+    border-radius: 50%;
+  }
+  .btn {
+    background: var(--ink);
+    color: var(--card);
+    border: none;
+    border-radius: 999px;
+    padding: 10px 22px;
+    font-family: inherit;
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: lowercase;
+    cursor: pointer;
+    transition: transform .15s, opacity .15s, background .2s;
+  }
+  .btn:hover { transform: translateY(-1px); }
+  .btn:active { transform: translateY(0); }
+  .btn:disabled { opacity: 0.4; cursor: default; transform: none; }
+  .btn.ghost {
+    background: transparent;
+    color: var(--ink);
+    border: 1px solid var(--line);
+  }
+  .btn.ghost:hover { border-color: var(--ink); }
+
+  .toast {
+    position: fixed;
+    bottom: 28px;
+    left: 50%;
+    transform: translate(-50%, 16px);
+    background: var(--ink);
+    color: var(--card);
+    padding: 10px 22px;
+    border-radius: 999px;
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .25s, transform .25s;
+    z-index: 50;
+  }
+  .toast.show {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+
+  footer {
+    margin-top: 24px;
+    text-align: center;
+    color: var(--muted);
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    text-transform: lowercase;
+  }
+
+  @media (max-width: 980px) {
+    .card.kpi { grid-column: span 6; }
+    .card.chart-line, .card.chart-cat, .card.top, .card.settings { grid-column: span 12; }
+  }
+  @media (max-width: 560px) {
+    .app { padding: 18px; }
+    header { flex-direction: column; align-items: flex-start; gap: 14px; }
+    .input.chat { width: 100%; text-align: left; }
+    .card.kpi { grid-column: span 12; }
+  }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <header>
+    <div class="brand">
+      <h1>toxiguard</h1>
+      <span class="tagline">тихий хранитель тона</span>
+    </div>
+    <div class="controls">
+      <span class="dot" id="live-dot" title="статус"></span>
+      <input id="chat" class="input chat" placeholder="chat id" />
+    </div>
+  </header>
+
+  <div class="grid">
+    <div class="card kpi"><div class="v" id="kpi-total">—</div><div class="l">всего инцидентов</div></div>
+    <div class="card kpi"><div class="v" id="kpi-today">—</div><div class="l">за сутки</div></div>
+    <div class="card kpi"><div class="v" id="kpi-offenders">—</div><div class="l">нарушителей</div></div>
+    <div class="card kpi"><div class="v" id="kpi-peak">—</div><div class="l">пик за период</div></div>
+
+    <div class="card chart-line">
+      <h2>динамика по дням <span class="hint">14 дней</span></h2>
+      <canvas id="chart-daily"></canvas>
+    </div>
+
+    <div class="card chart-cat">
+      <h2>категории</h2>
+      <canvas id="chart-cat"></canvas>
+    </div>
+
+    <div class="card top">
+      <h2>топ нарушителей <span class="hint">10 первых</span></h2>
+      <table>
+        <thead><tr><th style="width:32px"></th><th>пользователь</th><th class="num">инцидентов</th></tr></thead>
+        <tbody id="top-body"></tbody>
+      </table>
+    </div>
+
+    <div class="card settings">
+      <h2>настройки чата</h2>
+      <div class="field">
+        <div class="field-label"><span>порог чувствительности</span><b id="thr-val">0.75</b></div>
+        <input type="range" id="thr" min="0" max="1" step="0.05" value="0.75" />
+      </div>
+      <div style="display:flex; gap:10px; justify-content:flex-end;">
+        <button class="btn ghost" id="thr-reset">сброс</button>
+        <button class="btn" id="thr-save">сохранить</button>
+      </div>
+    </div>
+  </div>
+
+  <footer>обновляется каждые 30 секунд</footer>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const palette = ['#1a1a1a', '#6b6660', '#a89f93', '#d9d4cb', '#bfb7a8'];
+const $ = (id) => document.getElementById(id);
+const chatInput = $('chat');
+const liveDot = $('live-dot');
+const toastEl = $('toast');
+
+chatInput.value = localStorage.getItem('chatId') || '';
+
+Chart.defaults.font = { family: 'Inter', size: 11, weight: '300' };
+Chart.defaults.color = '#8a8580';
+Chart.defaults.borderColor = '#e3ddd2';
+Chart.defaults.animation = { duration: 600, easing: 'easeOutQuart' };
+
+const daily = new Chart($('chart-daily'), {
+  type: 'line',
+  data: { labels: [], datasets: [{
+    data: [],
+    borderColor: '#1a1a1a',
+    backgroundColor: (ctx) => {
+      const { ctx: c, chartArea } = ctx.chart;
+      if (!chartArea) return 'rgba(26,26,26,0.06)';
+      const g = c.createLinearGradient(0, chartArea.top, 0, chartArea.bottom);
+      g.addColorStop(0, 'rgba(26,26,26,0.18)');
+      g.addColorStop(1, 'rgba(26,26,26,0.00)');
+      return g;
+    },
+    borderWidth: 1.5,
+    tension: 0.35,
+    fill: true,
+    pointRadius: 0,
+    pointHoverRadius: 4,
+    pointHoverBackgroundColor: '#1a1a1a',
+  }]},
+  options: {
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        backgroundColor: '#1a1a1a',
+        titleFont: { family: 'Inter', size: 11, weight: '500' },
+        bodyFont: { family: 'Cormorant Garamond', size: 16 },
+        padding: 10, cornerRadius: 8, displayColors: false,
+      },
+    },
+    scales: {
+      x: { grid: { display: false }, border: { display: false } },
+      y: { beginAtZero: true, grid: { color: '#ece7df' }, border: { display: false }, ticks: { precision: 0 } },
+    },
+    interaction: { mode: 'index', intersect: false },
+  },
+});
+
+const cat = new Chart($('chart-cat'), {
+  type: 'doughnut',
+  data: { labels: [], datasets: [{
+    data: [], backgroundColor: palette, borderColor: '#fdfcf9', borderWidth: 3, hoverOffset: 6,
+  }]},
+  options: {
+    maintainAspectRatio: false,
+    cutout: '68%',
+    plugins: {
+      legend: {
+        position: 'bottom',
+        labels: { boxWidth: 8, boxHeight: 8, padding: 12, font: { family: 'Inter', size: 11 } },
+      },
+      tooltip: {
+        backgroundColor: '#1a1a1a',
+        bodyFont: { family: 'Inter', size: 12 },
+        padding: 10, cornerRadius: 8,
+      },
+    },
+  },
+});
+
+function showToast(text) {
+  toastEl.textContent = text;
+  toastEl.classList.add('show');
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => toastEl.classList.remove('show'), 2200);
+}
+
+async function refresh() {
+  const id = chatInput.value.trim();
+  if (!id) { liveDot.classList.remove('live'); return; }
+  localStorage.setItem('chatId', id);
+  try {
+    const r = await fetch(`/api/stats/${id}`);
+    if (!r.ok) throw new Error();
+    const d = await r.json();
+    liveDot.classList.add('live');
+
+    $('kpi-total').textContent = d.total ?? 0;
+    const series = (d.daily || []).map(x => x.count);
+    $('kpi-today').textContent = series.length ? series[series.length - 1] : 0;
+    $('kpi-offenders').textContent = (d.top_offenders || []).length;
+    $('kpi-peak').textContent = series.length ? Math.max(...series) : 0;
+
+    daily.data.labels = (d.daily || []).map(x => x.day.slice(5));
+    daily.data.datasets[0].data = series;
+    daily.update();
+
+    const entries = Object.entries(d.by_category || {});
+    cat.data.labels = entries.map(([k]) => k);
+    cat.data.datasets[0].data = entries.map(([, v]) => v);
+    cat.update();
+
+    const tb = $('top-body');
+    tb.innerHTML = '';
+    if (!d.top_offenders || !d.top_offenders.length) {
+      tb.innerHTML = '<tr><td colspan="3" class="empty">тишина и покой</td></tr>';
+    } else {
+      d.top_offenders.forEach((u, i) => {
+        const name = u.username ? '@' + u.username : `id ${u.user_id}`;
+        tb.insertAdjacentHTML('beforeend',
+          `<tr><td><span class="rank">${i + 1}</span></td><td>${name}</td><td class="num">${u.count}</td></tr>`);
+      });
+    }
+  } catch {
+    liveDot.classList.remove('live');
+  }
+}
+
+/* settings */
+const thr = $('thr'), thrVal = $('thr-val');
+thr.addEventListener('input', () => { thrVal.textContent = Number(thr.value).toFixed(2); });
+$('thr-reset').addEventListener('click', () => {
+  thr.value = 0.75; thr.dispatchEvent(new Event('input'));
+});
+$('thr-save').addEventListener('click', async () => {
+  const id = chatInput.value.trim();
+  if (!id) return showToast('укажите chat id');
+  const btn = $('thr-save'); btn.disabled = true;
+  try {
+    const r = await fetch(`/api/settings/${id}/threshold`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ threshold: Number(thr.value) }),
+    });
+    if (!r.ok) throw new Error();
+    showToast('порог сохранён');
+  } catch {
+    showToast('не удалось сохранить');
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+chatInput.addEventListener('change', refresh);
+refresh();
+setInterval(refresh, 30000);
+</script>
+</body>
+</html>

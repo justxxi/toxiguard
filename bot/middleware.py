@@ -10,16 +10,14 @@ from aiogram.types import Message
 from core.analyzer import analyze
 from core.database import log_incident
 
-WARN_THRESHOLD = 0.3
+WARN_THRESHOLD = 0.6
 BAN_THRESHOLD = 0.9
 
+Handler = Callable[[Message, dict[str, Any]], Awaitable[Any]]
+
+
 class ToxicityMiddleware(BaseMiddleware):
-    async def __call__(
-        self,
-        handler: Callable[[Message, dict[str, Any]], Awaitable[Any]],
-        event: Message,
-        data: dict[str, Any],
-    ) -> Any:
+    async def __call__(self, handler: Handler, event: Message, data: dict[str, Any]) -> Any:
         if not event.text:
             return await handler(event, data)
 
@@ -45,6 +43,5 @@ class ToxicityMiddleware(BaseMiddleware):
                 await event.delete()
             return
 
-        await event.reply(
-            f"⚠️ замечена токсичность ({score:.0%}). прошу, тише тон."
-        )
+        with suppress(TelegramAPIError):
+            await event.reply(f"⚠️ замечена токсичность ({score:.0%}). прошу, тише тон.")

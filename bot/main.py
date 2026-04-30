@@ -1,4 +1,3 @@
-#main
 from __future__ import annotations
 
 import asyncio
@@ -15,10 +14,15 @@ from bot.middleware import ToxicityMiddleware
 from core.analyzer import warmup
 from core.database import init_db
 
-async def main() -> None:
-    load_dotenv()
+
+def _configure_logging() -> None:
     logging.basicConfig(level=logging.WARNING, format="%(message)s")
     logging.getLogger("aiogram").setLevel(logging.WARNING)
+
+
+async def main() -> None:
+    load_dotenv()
+    _configure_logging()
 
     await init_db()
     warmup()
@@ -31,8 +35,11 @@ async def main() -> None:
     dp.message.outer_middleware(ToxicityMiddleware())
     dp.include_router(router)
 
-    await bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(bot)
+    try:
+        await bot.delete_webhook(drop_pending_updates=True)
+        await dp.start_polling(bot)
+    finally:
+        await bot.session.close()
 
 
 if __name__ == "__main__":
