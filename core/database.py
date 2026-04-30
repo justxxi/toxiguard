@@ -94,6 +94,25 @@ async def add_warning(chat_id: int, user_id: int) -> int:
         await s.commit()
         return row.count
 
+async def remove_warning(chat_id: int, user_id: int) -> int:
+    async with SessionLocal() as s:
+        row = (
+            await s.execute(
+                select(Warning_).where(
+                    Warning_.chat_id == chat_id, Warning_.user_id == user_id
+                )
+            )
+        ).scalar_one_or_none()
+
+        if row is None or row.count == 0:
+            return 0
+
+        row.count -= 1
+        if row.count == 0:
+            row.banned_at = None
+        await s.commit()
+        return row.count
+
 async def get_warnings(chat_id: int, user_id: int) -> int:
     async with SessionLocal() as s:
         row = (
