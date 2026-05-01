@@ -3,6 +3,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import signal
+import sys
+from contextlib import suppress
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -15,45 +18,83 @@ from bot.middleware import ToxicityMiddleware
 from core.analyzer import warmup
 from core.database import init_db
 
+log = logging.getLogger("toxiguard")
 
 COMMANDS = [
-    BotCommand(command="stats", description="сводка по чату"),
-    BotCommand(command="warn", description="выдать варн (ответом)"),
-    BotCommand(command="unwarn", description="снять варн (ответом)"),
-    BotCommand(command="mute", description="заглушить (ответом, /mute 1h)"),
-    BotCommand(command="unmute", description="вернуть голос (ответом)"),
-    BotCommand(command="top", description="топ нарушителей"),
-    BotCommand(command="threshold", description="порог чувствительности"),
+    BotCommand(command="stats", description="📊 сводка"),
+    BotCommand(command="top", description="🏆 топ нарушителей"),
+    BotCommand(command="warn", description="⚠️ выдать варн"),
+    BotCommand(command="unwarn", description="✅ снять варн"),
+    BotCommand(command="mute", description="🤐 мут (например 1h)"),
+    BotCommand(command="unmute", description="✨ снять мут"),
+    BotCommand(command="threshold", description="🎚 порог чувствительности"),
 ]
 
 
 def _configure_logging() -> None:
-    logging.basicConfig(level=logging.WARNING, format="%(message)s")
-    logging.getLogger("aiogram").setLevel(logging.WARNING)
+    logging.basicConfig(
+        level=os.environ.get("LOG_LEVEL", "INFO").upper(),
+        format="%(asctime)s %(levelname)s %(name)s · %(message)s",
+        datefmt="%H:%M:%S",
+        stream=sys.stdout,
+    )
+    for noisy in ("aiogram.event", "aiogram.dispatcher"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
-async def main() -> None:
-    load_dotenv()
-    _configure_logging()
+async def _run() -> None:
+    token = os.environ.get("BOT_TOKEN")
+    if not token:
+        raise SystemExit("BOT_TOKEN is not set")
 
+    log.info("starting toxiguard…")
     await init_db()
     warmup()
 
-    bot = Bot(
-        token=os.environ["BOT_TOKEN"],
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-    )
+    bot = Bot(token=token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
     dp.message.outer_middleware(ToxicityMiddleware())
     dp.include_router(router)
 
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, stop.set)
+        except NotImplementedError:
+            pass
+
+    await bot.set_my_commands(COMMANDS)
+    await bot.delete_webhook(drop_pending_updates=True)
+
+    me = await bot.get_me()
+    log.info("online as @%s", me.username)
+
+    polling = asyncio.create_task(dp.start_polling(bot, handle_signals=False))
+    waiter = asyncio.create_task(stop.wait())
     try:
-        await bot.set_my_commands(COMMANDS)
-        await bot.delete_webhook(drop_pending_updates=True)
-        await dp.start_polling(bot)
+        await asyncio.wait({polling, waiter}, return_when=asyncio.FIRST_COMPLETED)
     finally:
-        await bot.session.close()
+        log.info("shutting down…")
+        with suppress(Exception):
+            await dp.stop_polling()
+        polling.cancel()
+        with suppress(asyncio.CancelledError, Exception):
+            await polling
+        waiter.cancel()
+        with suppress(Exception):
+            await bot.session.close()
+        log.info("bye")
+
+
+def main() -> None:
+    load_dotenv()
+    _configure_logging()
+    try:
+        asyncio.run(_run())
+    except KeyboardInterrupt:
+        pass
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

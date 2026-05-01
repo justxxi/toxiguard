@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+from collections import OrderedDict
 from functools import lru_cache
 from typing import TypedDict
 
 from detoxify import Detoxify
 
-# xlm-r checkpoint: en, ru, uk, de, fr, es, it, pt, tr
 MODEL_NAME = "multilingual"
+MIN_LEN = 3
+CACHE_SIZE = 4096
+
+log = logging.getLogger(__name__)
 
 
 class Scores(TypedDict):
@@ -18,11 +23,20 @@ class Scores(TypedDict):
     identity_hate: float
 
 
-_ZERO: Scores = {"toxicity": 0.0, "insult": 0.0, "threat": 0.0, "obscene": 0.0, "identity_hate": 0.0}
+_ZERO: Scores = {
+    "toxicity": 0.0,
+    "insult": 0.0,
+    "threat": 0.0,
+    "obscene": 0.0,
+    "identity_hate": 0.0,
+}
+
+_cache: OrderedDict[str, Scores] = OrderedDict()
 
 
 @lru_cache(maxsize=1)
 def _model() -> Detoxify:
+    log.info("loading detoxify model: %s", MODEL_NAME)
     return Detoxify(MODEL_NAME)
 
 
@@ -41,8 +55,31 @@ def _predict(text: str) -> Scores:
     }
 
 
+def _cache_get(key: str) -> Scores | None:
+    hit = _cache.get(key)
+    if hit is None:
+        return None
+    _cache.move_to_end(key)
+    return hit
+
+
+def _cache_put(key: str, value: Scores) -> None:
+    _cache[key] = value
+    _cache.move_to_end(key)
+    if len(_cache) > CACHE_SIZE:
+        _cache.popitem(last=False)
+
+
 async def analyze(text: str) -> Scores:
     text = (text or "").strip()
-    if not text:
+    if len(text) < MIN_LEN:
         return dict(_ZERO)
-    return await asyncio.to_thread(_predict, text)
+
+    key = text.lower()[:512]
+    hit = _cache_get(key)
+    if hit is not None:
+        return dict(hit)
+
+    scores = await asyncio.to_thread(_predict, text)
+    _cache_put(key, scores)
+    return scores
