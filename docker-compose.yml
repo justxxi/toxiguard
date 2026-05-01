@@ -1,1 +1,34 @@
-﻿#docker-compose
+services:
+  bot:
+    build: .
+    image: toxiguard:latest
+    container_name: toxiguard-bot
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DB_URL: sqlite+aiosqlite:////app/data/toxiguard.db
+    working_dir: /app
+    command: python -m bot.main
+    volumes:
+      - data:/app/data
+      - cache:/app/.cache
+
+  dashboard:
+    image: toxiguard:latest
+    container_name: toxiguard-dashboard
+    restart: unless-stopped
+    depends_on:
+      - bot
+    environment:
+      DB_URL: sqlite+aiosqlite:////app/data/toxiguard.db
+    working_dir: /app
+    command: uvicorn dashboard.app:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    volumes:
+      - data:/app/data
+      - cache:/app/.cache
+
+volumes:
+  data:
+  cache:

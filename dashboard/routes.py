@@ -12,6 +12,13 @@ class ThresholdIn(BaseModel):
     threshold: float = Field(ge=0.0, le=1.0)
 
 
+@router.get("/stats")
+async def stats_all() -> dict:
+    data = await get_stats()
+    data["daily"] = await get_daily()
+    return data
+
+
 @router.get("/stats/{chat_id}")
 async def stats(chat_id: int) -> dict:
     data = await get_stats(chat_id)
@@ -19,9 +26,19 @@ async def stats(chat_id: int) -> dict:
     return data
 
 
+@router.get("/events")
+async def events_all(limit: int = 50) -> list[dict]:
+    return await get_events(limit=limit)
+
+
 @router.get("/events/{chat_id}")
 async def events(chat_id: int, limit: int = 50) -> list[dict]:
     return await get_events(chat_id, limit=limit)
+
+
+@router.get("/top")
+async def top_all() -> list[dict]:
+    return (await get_stats())["top_offenders"]
 
 
 @router.get("/top/{chat_id}")

@@ -7,7 +7,9 @@ from sqlalchemy import BigInteger, DateTime, Float, Integer, String, func, selec
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-DB_URL = "sqlite+aiosqlite:///toxiguard.db"
+import os
+
+DB_URL = os.environ.get("DB_URL", "sqlite+aiosqlite:///toxiguard.db")
 
 
 def _now() -> datetime:
@@ -100,6 +102,16 @@ async def remove_warning(chat_id: int, user_id: int) -> int:
         return row.count
 
 
+async def reset_warnings(chat_id: int, user_id: int) -> None:
+    async with SessionLocal() as s:
+        row = await _find_warning(s, chat_id, user_id)
+        if row is None:
+            return
+        row.count = 0
+        row.banned_at = None
+        await s.commit()
+
+
 async def get_warnings(chat_id: int, user_id: int) -> int:
     async with SessionLocal() as s:
         row = (
@@ -186,17 +198,24 @@ async def set_threshold(chat_id: int, threshold: float) -> float:
         return threshold
 
 
+async def get_threshold(chat_id: int, default: float = 0.75) -> float:
+    async with SessionLocal() as s:
+        row = await s.get(ChatSettings, chat_id)
+        return row.threshold if row is not None else default
+
+
 async def log_incident(
     chat_id: int,
     user_id: int,
     text: str,
     score: float,
     username: Optional[str] = None,
+    category: str = "toxicity",
 ) -> None:
     await add_event(
         chat_id=chat_id,
         user_id=user_id,
         username=username,
         score=score,
-        category="toxicity",
+        category=category,
     )
