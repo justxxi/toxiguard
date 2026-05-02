@@ -9,7 +9,10 @@ from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command, CommandObject
 from aiogram.types import ChatPermissions, Message, User
 
-from bot.permissions import is_admin
+from bot.permissions import can_restrict, is_admin
+from bot.utils import mention
+from core import redis as _redis
+from core.config import settings
 from core.database import (
     add_warning,
     get_stats,
@@ -21,39 +24,23 @@ from core.database import (
 
 router = Router()
 
-MUTE_AFTER = 3
-DEFAULT_MUTE = timedelta(hours=1)
 MUTED_PERMS = ChatPermissions(can_send_messages=False)
-OPEN_PERMS = ChatPermissions(
-    can_send_messages=True,
-    can_send_audios=True,
-    can_send_documents=True,
-    can_send_photos=True,
-    can_send_videos=True,
-    can_send_video_notes=True,
-    can_send_voice_notes=True,
-    can_send_polls=True,
-    can_send_other_messages=True,
-    can_add_web_page_previews=True,
-    can_invite_users=True,
-)
 
-_DURATION_RE = re.compile(r"^\s*(\d+)\s*([smhd])\s*$", re.IGNORECASE)
+_DURATION_RE = re.compile(r"(?:^|\s)(\d+)\s*([smhd])\b", re.IGNORECASE)
 _DURATION_UNITS = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}
 
 
 def _parse_duration(raw: str) -> timedelta | None:
-    m = _DURATION_RE.match(raw)
+    m = _DURATION_RE.search(raw)
     if not m:
         return None
     value, unit = int(m.group(1)), m.group(2).lower()
     if value <= 0:
         return None
-    return timedelta(**{_DURATION_UNITS[unit]: value})
-
-
-def _mention(user: User) -> str:
-    return f"@{user.username}" if user.username else (user.full_name or "друг")
+    parsed = timedelta(**{_DURATION_UNITS[unit]: value})
+    if parsed > settings.max_mute_duration:
+        return None
+    return parsed
 
 
 async def _admins_only(message: Message) -> bool:
@@ -64,15 +51,38 @@ async def _admins_only(message: Message) -> bool:
     return False
 
 
-async def _target(message: Message) -> User | None:
-    if not message.reply_to_message:
-        await message.reply("ответь на сообщение нарушителя")
+async def _target(message: Message, command: CommandObject | None = None) -> User | None:
+    if message.reply_to_message:
+        target = message.reply_to_message.from_user
+        if target is None or target.is_bot:
+            await message.reply("это бот, его не трону")
+            return None
+        return target
+
+    username = None
+    if command and command.args:
+        for p in command.args.split():
+            if p.startswith("@"):
+                username = p
+                break
+    if not username:
+        await message.reply("ответь на сообщение или укажи @юзернейм")
         return None
-    target = message.reply_to_message.from_user
-    if target is None or target.is_bot:
+
+    user_id = await _redis.resolve_username(username)
+    if user_id is None:
+        await message.reply("не знаю такого пользователя — нужно чтобы он написал в чат")
+        return None
+
+    try:
+        member = await message.chat.get_member(user_id)
+    except TelegramAPIError:
+        await message.reply("не нашёл такого пользователя")
+        return None
+    if member.user.is_bot:
         await message.reply("это бот, его не трону")
         return None
-    return target
+    return member.user
 
 
 async def _mute(message: Message, user: User, duration: timedelta, suffix: str) -> bool:
@@ -81,7 +91,7 @@ async def _mute(message: Message, user: User, duration: timedelta, suffix: str) 
         await message.chat.restrict(user.id, permissions=MUTED_PERMS, until_date=until)
     except TelegramAPIError:
         return False
-    await message.answer(f"🤐 {_mention(user)} — {suffix}")
+    await message.answer(f"🤐 {mention(user)} — {suffix}")
     return True
 
 
@@ -108,23 +118,27 @@ async def cmd_stats(message: Message) -> None:
 
 
 @router.message(Command("warn"))
-async def cmd_warn(message: Message) -> None:
+async def cmd_warn(message: Message, command: CommandObject) -> None:
     if not await _admins_only(message):
         return
-    target = await _target(message)
+    target = await _target(message, command)
     if target is None:
         return
     count = await add_warning(message.chat.id, target.id)
-    await message.answer(f"⚠️ {_mention(target)} · {count}/{MUTE_AFTER}")
-    if count >= MUTE_AFTER:
-        await _mute(message, target, DEFAULT_MUTE, "час тишины")
+    await message.answer(f"⚠️ {mention(target)} · {count}/{settings.mute_after}")
+    if count >= settings.mute_after:
+        if not await can_restrict(message.chat):
+            await message.answer("⚠️ бот не может ограничивать участников")
+            return
+        if not await _mute(message, target, settings.mute_duration, "час тишины"):
+            await message.answer("⚠️ не хватает прав")
 
 
 @router.message(Command("unwarn"))
-async def cmd_unwarn(message: Message) -> None:
+async def cmd_unwarn(message: Message, command: CommandObject) -> None:
     if not await _admins_only(message):
         return
-    target = await _target(message)
+    target = await _target(message, command)
     if target is None:
         return
     count = await remove_warning(message.chat.id, target.id)
@@ -135,37 +149,44 @@ async def cmd_unwarn(message: Message) -> None:
 async def cmd_mute(message: Message, command: CommandObject) -> None:
     if not await _admins_only(message):
         return
-    target = await _target(message)
+    target = await _target(message, command)
     if target is None:
         return
 
-    duration = DEFAULT_MUTE
+    duration = settings.mute_duration
+    label = "1h"
     if command.args:
         parsed = _parse_duration(command.args)
         if parsed is None:
-            await message.answer("формат: 30m, 2h, 1d")
+            await message.answer("формат: 30m, 2h, 1d (макс 366d)")
             return
         duration = parsed
-
-    label = command.args or "1h"
+        m = _DURATION_RE.search(command.args)
+        label = m.group(0).strip() if m else "1h"
+    if not await can_restrict(message.chat):
+        await message.answer("⚠️ бот не может ограничивать участников")
+        return
     if not await _mute(message, target, duration, label):
         await message.answer("⚠️ не хватает прав")
 
 
 @router.message(Command("unmute"))
-async def cmd_unmute(message: Message) -> None:
+async def cmd_unmute(message: Message, command: CommandObject) -> None:
     if not await _admins_only(message):
         return
-    target = await _target(message)
+    target = await _target(message, command)
     if target is None:
         return
+    if not await can_restrict(message.chat):
+        await message.answer("⚠️ бот не может ограничивать участников")
+        return
     try:
-        await message.chat.restrict(target.id, permissions=OPEN_PERMS)
+        await message.chat.restrict(target.id, permissions=ChatPermissions(can_send_messages=True))
     except TelegramAPIError:
         await message.answer("⚠️ не хватает прав")
         return
     await reset_warnings(message.chat.id, target.id)
-    await message.answer(f"✨ {_mention(target)} снова с нами")
+    await message.answer(f"✨ {mention(target)} снова с нами")
 
 
 @router.message(Command("top", "top_toxic"))

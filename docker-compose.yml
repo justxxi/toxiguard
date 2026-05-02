@@ -1,34 +1,72 @@
 services:
+  redis:
+    image: redis:7-alpine
+    container_name: toxiguard-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  postgres:
+    image: postgres:17-alpine
+    container_name: toxiguard-postgres
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_DB: toxiguard
+      POSTGRES_USER: ${POSTGRES_USER:-toxiguard}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-toxiguard}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U toxiguard -d toxiguard"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   bot:
     build: .
     image: toxiguard:latest
     container_name: toxiguard-bot
     restart: unless-stopped
     env_file: .env
-    environment:
-      DB_URL: sqlite+aiosqlite:////app/data/toxiguard.db
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     working_dir: /app
     command: python -m bot.main
     volumes:
-      - data:/app/data
       - cache:/app/.cache
 
   dashboard:
     image: toxiguard:latest
     container_name: toxiguard-dashboard
     restart: unless-stopped
+    env_file: .env
     depends_on:
-      - bot
-    environment:
-      DB_URL: sqlite+aiosqlite:////app/data/toxiguard.db
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     working_dir: /app
-    command: uvicorn dashboard.app:app --host 0.0.0.0 --port 8000
+    command: >
+      gunicorn dashboard.app:app
+      --worker-class uvicorn.workers.UvicornWorker
+      --bind 0.0.0.0:8000
+      --workers 2
+      --access-logfile -
     ports:
       - "8000:8000"
     volumes:
-      - data:/app/data
       - cache:/app/.cache
 
 volumes:
-  data:
+  pg_data:
   cache:
+  redis_data:

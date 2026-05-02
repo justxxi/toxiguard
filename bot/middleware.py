@@ -3,30 +3,25 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 from aiogram import BaseMiddleware
-from aiogram.exceptions import TelegramAPIError
-from aiogram.types import ChatPermissions, Message, User
+from aiogram.exceptions import TelegramAPIError, TelegramRetryAfter
+from aiogram.types import ChatPermissions, Message
 
-from bot.permissions import is_admin
+from bot.permissions import can_restrict, is_admin
 from bot.profanity import is_profane
+from bot.utils import mention
+from core import redis as _redis
 from core.analyzer import analyze
+from core.config import settings
 from core.database import get_threshold, mark_banned, record_incident
+from core.metrics import messages_processed, telegram_api_errors, toxicity_detected
 
 log = logging.getLogger(__name__)
 
-DEFAULT_THRESHOLD = 0.75
-MUTE_AFTER = 3
-MUTE_DURATION = timedelta(hours=1)
 MUTED_PERMS = ChatPermissions(can_send_messages=False)
-
-
-def _mention(user: User | None) -> str:
-    if user is None:
-        return "друг"
-    return f"@{user.username}" if user.username else (user.full_name or "друг")
 
 
 class ToxicityMiddleware(BaseMiddleware):
@@ -36,8 +31,14 @@ class ToxicityMiddleware(BaseMiddleware):
         event: Message,
         data: dict[str, Any],
     ) -> Any:
+        user = event.from_user
+        if user and user.username:
+            await _redis.set_username(user.username, user.id)
+
         if not self._should_check(event):
             return await handler(event, data)
+
+        messages_processed.labels(chat_id=event.chat.id).inc()
 
         if await is_admin(event):
             return await handler(event, data)
@@ -51,12 +52,12 @@ class ToxicityMiddleware(BaseMiddleware):
         else:
             scores = await analyze(text)
             score = max(scores.values())
-            threshold = await get_threshold(event.chat.id, DEFAULT_THRESHOLD)
-            data["toxicity"] = scores
+            threshold = await get_threshold(event.chat.id)
             if score < threshold:
                 return await handler(event, data)
             category = "toxicity"
 
+        toxicity_detected.labels(category=category, chat_id=event.chat.id).inc()
         await self._strike(event, score, category, profane)
         return await handler(event, data)
 
@@ -86,20 +87,27 @@ class ToxicityMiddleware(BaseMiddleware):
             category=category,
         )
 
-        mention = _mention(user)
+        m = mention(user)
         tail = "ругаемся помягче" if profane else f"токсично — {score:.0%}"
-        body = f"⚠️ {mention}, {tail} · {count}/{MUTE_AFTER}"
+        body = f"⚠️ {m}, {tail} · {count}/{settings.mute_after}"
 
         with suppress(TelegramAPIError):
             await event.answer(body)
 
-        if count >= MUTE_AFTER:
-            until = datetime.now(UTC) + MUTE_DURATION
+        if count >= settings.mute_after:
+            if not await can_restrict(event.chat):
+                return
+            until = datetime.now(UTC) + settings.mute_duration
             try:
                 await event.chat.restrict(user.id, permissions=MUTED_PERMS, until_date=until)
+            except TelegramRetryAfter as exc:
+                log.warning("flood wait for %s: %ss", user.id, exc.retry_after)
+                telegram_api_errors.labels(method="restrict").inc()
+                return
             except TelegramAPIError as exc:
                 log.warning("restrict failed for %s: %s", user.id, exc)
+                telegram_api_errors.labels(method="restrict").inc()
                 return
             await mark_banned(event.chat.id, user.id)
             with suppress(TelegramAPIError):
-                await event.answer(f"🤐 {mention} — час тишины")
+                await event.answer(f"🤐 {m} — час тишины")

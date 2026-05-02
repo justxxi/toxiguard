@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from typing import TypedDict
 
 from sqlalchemy import (
     BigInteger,
@@ -10,18 +10,28 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    delete,
     event,
     func,
     select,
     update,
 )
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import Engine
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-DB_URL = os.environ.get("DB_URL", "sqlite+aiosqlite:///toxiguard.db")
-DEFAULT_THRESHOLD = 0.75
+from core.config import settings
+
+if settings.db_url.startswith("sqlite"):
+    from sqlalchemy.dialects.sqlite import insert as _upsert
+else:
+    from sqlalchemy.dialects.postgresql import insert as _upsert
+
+
+class StatsData(TypedDict):
+    total: int
+    by_category: dict[str, int]
+    top_offenders: list[dict]
 
 
 def _now() -> datetime:
@@ -42,7 +52,7 @@ class Event(Base):
     username: Mapped[str | None] = mapped_column(String(64), nullable=True)
     score: Mapped[float] = mapped_column(Float)
     category: Mapped[str] = mapped_column(String(32))
-    timestamp: Mapped[datetime] = mapped_column(DateTime, default=_now, index=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
 
 
 class Warning_(Base):
@@ -53,25 +63,37 @@ class Warning_(Base):
     chat_id: Mapped[int] = mapped_column(BigInteger)
     user_id: Mapped[int] = mapped_column(BigInteger)
     count: Mapped[int] = mapped_column(Integer, default=0)
-    banned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    banned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class ChatSettings(Base):
     __tablename__ = "chat_settings"
 
     chat_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    threshold: Mapped[float] = mapped_column(Float, default=DEFAULT_THRESHOLD)
+    threshold: Mapped[float] = mapped_column(Float, default=settings.default_threshold)
 
 
-engine = create_async_engine(DB_URL, echo=False, pool_pre_ping=True)
+engine = create_async_engine(settings.db_url, echo=False, pool_pre_ping=True)
 SessionLocal: async_sessionmaker[AsyncSession] = async_sessionmaker(engine, expire_on_commit=False)
 
 _threshold_cache: dict[int, float] = {}
 
 
+async def dispose_engine() -> None:
+    await engine.dispose()
+
+
+async def cleanup_events() -> int:
+    cutoff = _now() - timedelta(days=settings.event_retention_days)
+    async with SessionLocal() as s:
+        result = await s.execute(delete(Event).where(Event.timestamp < cutoff))
+        await s.commit()
+        return result.rowcount or 0
+
+
 @event.listens_for(Engine, "connect")
 def _sqlite_pragmas(dbapi_connection, _) -> None:
-    if "sqlite" not in str(dbapi_connection.__class__).lower() and "sqlite" not in DB_URL:
+    if "sqlite" not in str(dbapi_connection.__class__).lower() and "sqlite" not in settings.db_url:
         return
     cursor = dbapi_connection.cursor()
     try:
@@ -88,7 +110,7 @@ async def init_db() -> None:
         await conn.run_sync(Base.metadata.create_all)
 
 
-async def get_threshold(chat_id: int, default: float = DEFAULT_THRESHOLD) -> float:
+async def get_threshold(chat_id: int, default: float = settings.default_threshold) -> float:
     cached = _threshold_cache.get(chat_id)
     if cached is not None:
         return cached
@@ -102,7 +124,7 @@ async def get_threshold(chat_id: int, default: float = DEFAULT_THRESHOLD) -> flo
 async def set_threshold(chat_id: int, threshold: float) -> float:
     threshold = max(0.0, min(1.0, threshold))
     stmt = (
-        sqlite_insert(ChatSettings)
+        _upsert(ChatSettings)
         .values(chat_id=chat_id, threshold=threshold)
         .on_conflict_do_update(
             index_elements=[ChatSettings.chat_id],
@@ -135,7 +157,7 @@ async def record_incident(
         )
 
         upsert = (
-            sqlite_insert(Warning_)
+            _upsert(Warning_)
             .values(chat_id=chat_id, user_id=user_id, count=1)
             .on_conflict_do_update(
                 index_elements=["chat_id", "user_id"],
@@ -156,7 +178,7 @@ async def record_incident(
 
 async def add_warning(chat_id: int, user_id: int) -> int:
     upsert = (
-        sqlite_insert(Warning_)
+        _upsert(Warning_)
         .values(chat_id=chat_id, user_id=user_id, count=1)
         .on_conflict_do_update(
             index_elements=["chat_id", "user_id"],
@@ -218,7 +240,7 @@ async def mark_banned(chat_id: int, user_id: int) -> None:
         await s.commit()
 
 
-async def get_stats(chat_id: int | None = None) -> dict:
+async def get_stats(chat_id: int | None = None) -> StatsData:
     async with SessionLocal() as s:
         q_total = select(func.count(Event.id))
         q_cat = select(Event.category, func.count(Event.id)).group_by(Event.category)

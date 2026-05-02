@@ -18,4 +18,7 @@ RUN pip install --upgrade pip \
 
 COPY . .
 
-RUN mkdir -p /app/data /app/.cache
+RUN mkdir -p /app/.cache
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+    CMD python -c "import sys; sys.exit(0)"

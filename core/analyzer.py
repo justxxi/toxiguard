@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from collections import OrderedDict
 from functools import lru_cache
@@ -8,9 +9,7 @@ from typing import TypedDict
 
 from detoxify import Detoxify
 
-MODEL_NAME = "multilingual"
-MIN_LEN = 3
-CACHE_SIZE = 4096
+from core.config import settings
 
 log = logging.getLogger(__name__)
 
@@ -32,12 +31,13 @@ _ZERO: Scores = {
 }
 
 _cache: OrderedDict[str, Scores] = OrderedDict()
+_semaphore = asyncio.Semaphore(settings.ml_concurrency)
 
 
 @lru_cache(maxsize=1)
 def _model() -> Detoxify:
-    log.info("loading detoxify model: %s", MODEL_NAME)
-    return Detoxify(MODEL_NAME)
+    log.info("loading detoxify model: %s", settings.model_name)
+    return Detoxify(settings.model_name)
 
 
 def warmup() -> None:
@@ -66,20 +66,25 @@ def _cache_get(key: str) -> Scores | None:
 def _cache_put(key: str, value: Scores) -> None:
     _cache[key] = value
     _cache.move_to_end(key)
-    if len(_cache) > CACHE_SIZE:
+    if len(_cache) > settings.cache_size:
         _cache.popitem(last=False)
+
+
+def _cache_key(text: str) -> str:
+    return hashlib.sha256(text.encode()).hexdigest()
 
 
 async def analyze(text: str) -> Scores:
     text = (text or "").strip()
-    if len(text) < MIN_LEN:
+    if len(text) < settings.min_text_len:
         return dict(_ZERO)
 
-    key = text.lower()[:512]
+    key = _cache_key(text.lower())
     hit = _cache_get(key)
     if hit is not None:
         return dict(hit)
 
-    scores = await asyncio.to_thread(_predict, text)
+    async with _semaphore:
+        scores = await asyncio.to_thread(_predict, text)
     _cache_put(key, scores)
     return scores

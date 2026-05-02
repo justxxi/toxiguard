@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import signal
 import sys
 from contextlib import suppress
@@ -11,12 +10,12 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.types import BotCommand
-from dotenv import load_dotenv
 
 from bot.handlers import router
 from bot.middleware import ToxicityMiddleware
 from core.analyzer import warmup
-from core.database import init_db
+from core.config import settings
+from core.database import cleanup_events, dispose_engine, init_db
 
 log = logging.getLogger("toxiguard")
 
@@ -33,7 +32,7 @@ COMMANDS = [
 
 def _configure_logging() -> None:
     logging.basicConfig(
-        level=os.environ.get("LOG_LEVEL", "INFO").upper(),
+        level=settings.log_level.upper(),
         format="%(asctime)s %(levelname)s %(name)s · %(message)s",
         datefmt="%H:%M:%S",
         stream=sys.stdout,
@@ -42,16 +41,28 @@ def _configure_logging() -> None:
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
+async def _cleanup_loop() -> None:
+    while True:
+        await asyncio.sleep(3600)
+        try:
+            removed = await cleanup_events()
+            log.debug("cleanup removed %s events", removed)
+        except Exception:
+            pass
+
+
 async def _run() -> None:
-    token = os.environ.get("BOT_TOKEN")
-    if not token:
+    if not settings.bot_token:
         raise SystemExit("BOT_TOKEN is not set")
 
     log.info("starting toxiguard…")
     await init_db()
     warmup()
 
-    bot = Bot(token=token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    bot = Bot(
+        token=settings.bot_token,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
     dp = Dispatcher()
     dp.message.outer_middleware(ToxicityMiddleware())
     dp.include_router(router)
@@ -72,6 +83,7 @@ async def _run() -> None:
 
     polling = asyncio.create_task(dp.start_polling(bot, handle_signals=False))
     waiter = asyncio.create_task(stop.wait())
+    cleanup = asyncio.create_task(_cleanup_loop())
     try:
         await asyncio.wait({polling, waiter}, return_when=asyncio.FIRST_COMPLETED)
     finally:
@@ -82,13 +94,17 @@ async def _run() -> None:
         with suppress(asyncio.CancelledError, Exception):
             await polling
         waiter.cancel()
+        cleanup.cancel()
+        with suppress(asyncio.CancelledError, Exception):
+            await cleanup
         with suppress(Exception):
             await bot.session.close()
+        with suppress(Exception):
+            await dispose_engine()
         log.info("bye")
 
 
 def main() -> None:
-    load_dotenv()
     _configure_logging()
     try:
         asyncio.run(_run())

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 import pytest_asyncio
 
 from core import database as db
+from core.config import settings
 
 
 @pytest_asyncio.fixture
@@ -45,7 +48,7 @@ async def test_record_incident_logs_and_warns(fresh_db) -> None:
 
 @pytest.mark.asyncio
 async def test_threshold_persists_and_caches(fresh_db) -> None:
-    assert await db.get_threshold(42) == pytest.approx(db.DEFAULT_THRESHOLD)
+    assert await db.get_threshold(42) == pytest.approx(settings.default_threshold)
     await db.set_threshold(42, 0.6)
     assert await db.get_threshold(42) == pytest.approx(0.6)
     assert db._threshold_cache[42] == pytest.approx(0.6)
@@ -63,3 +66,19 @@ async def test_mark_banned_resets_count(fresh_db) -> None:
         await db.add_warning(1, 100)
     await db.mark_banned(1, 100)
     assert await db.add_warning(1, 100) == 1
+
+
+@pytest.mark.asyncio
+async def test_cleanup_events(fresh_db) -> None:
+    old = datetime.now(UTC) - timedelta(days=settings.event_retention_days + 1)
+    async with db.SessionLocal() as s:
+        s.add(
+            db.Event(
+                chat_id=1, user_id=1, username="x", score=0.5, category="toxicity", timestamp=old
+            )
+        )
+        await s.commit()
+    removed = await db.cleanup_events()
+    assert removed == 1
+    stats = await db.get_stats(1)
+    assert stats["total"] == 0

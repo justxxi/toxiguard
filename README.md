@@ -22,20 +22,21 @@ It listens for toxicity, deletes the worst of it, and gives offenders three chan
 
 - **Multilingual ML.** Powered by Detoxify (`xlm-roberta`) — EN, RU, UK, DE, FR, ES, IT, PT, TR.
 - **Two layers of defence.** Profanity dictionary for instant decisions, neural classifier for nuance.
-- **Adaptive.** Per-chat sensitivity threshold, in-memory caches for predictions, admin status, and settings.
-- **Atomic.** Race-free warning counters with SQLite WAL and `ON CONFLICT` upserts.
-- **Observable.** A FastAPI dashboard exposes live stats, top offenders, and incident history.
-- **Composable.** Bot and dashboard share one image, one volume, one schema.
+- **Adaptive.** Per-chat sensitivity threshold, Redis caching for admin status, and settings.
+- **Atomic.** Race-free warning counters with PostgreSQL upserts.
+- **Observable.** Prometheus metrics + FastAPI dashboard with live stats.
+- **Composable.** Bot and dashboard share one image, PostgreSQL + Redis backend.
 
 ## Architecture
 
 ```
         ┌──────────────┐    ┌──────────────────┐    ┌──────────────┐
-Update ─►  middleware  │ ─► │  profanity / ML  │ ─► │   sqlite     │
+Update ─►  middleware  │ ─► │  profanity / ML  │ ──► │  PostgreSQL  │
         └──────┬───────┘    └──────────────────┘    └──────┬───────┘
-               │                                            │
-               ▼                                            ▼
-        delete + warn                              FastAPI dashboard
+               │                     │                    │
+               ▼                     ▼                    ▼
+        delete + warn          Redis cache          FastAPI dashboard
+                                                      Prometheus /metrics
 ```
 
 ## Quick start
@@ -55,10 +56,10 @@ Dashboard: <http://localhost:8000>
 | ---------------- | ----------- | ------------------------------------------------- |
 | `/stats`         | admins      | incident totals, breakdown, current threshold     |
 | `/top`           | admins      | top offenders with medals                         |
-| `/warn`          | admins      | manual warning (reply to a message)               |
-| `/unwarn`        | admins      | revoke a warning                                  |
-| `/mute 30m`      | admins      | mute for `30m` / `2h` / `1d`                      |
-| `/unmute`        | admins      | restore voice and reset warnings                  |
+| `/warn`          | admins      | manual warning (reply or `@username`)             |
+| `/unwarn`        | admins      | revoke a warning (reply or `@username`)           |
+| `/mute 30m`      | admins      | mute for `30m` / `2h` / `1d` (reply or `@user`)   |
+| `/unmute`        | admins      | restore voice (reply or `@username`)              |
 | `/threshold 0.7` | admins      | tune sensitivity (`0.0` lax — `1.0` strict)       |
 
 Three warnings = an automatic hour of silence.
@@ -79,8 +80,14 @@ The test suite stubs out the ML model, so you don't need GPU drivers or PyTorch 
 | Variable         | Default                                  | Notes                          |
 | ---------------- | ---------------------------------------- | ------------------------------ |
 | `BOT_TOKEN`      | —                                        | required                       |
-| `DB_URL`         | `sqlite+aiosqlite:///toxiguard.db`       | any SQLAlchemy async URL       |
+| `DB_URL`         | `postgresql+asyncpg://...`               | `sqlite+aiosqlite` for dev     |
+| `REDIS_URL`      | `redis://localhost:6379`                 | optional, for distributed cache |
 | `LOG_LEVEL`      | `INFO`                                   | `DEBUG` / `INFO` / `WARNING`   |
+| `DEFAULT_THRESHOLD` | `0.75`                              | global toxicity threshold      |
+| `MUTE_AFTER`       | `3`                                    | warnings before auto-mute      |
+| `ML_CONCURRENCY`   | `4`                                    | max concurrent ML inferences   |
+| `EVENT_RETENTION_DAYS` | `90`                              | history retention              |
+| `DASHBOARD_PASSWORD` | —                                 | basic auth for dashboard API   |
 
 ## License
 

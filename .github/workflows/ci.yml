@@ -28,7 +28,7 @@ jobs:
           cache-dependency-path: requirements-dev.txt
 
       - name: Install ruff
-        run: pip install ruff==0.8.4
+        run: pip install ruff==0.15.12
 
       - name: Ruff check
         run: ruff check .
