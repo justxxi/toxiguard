@@ -98,7 +98,7 @@ async def _mute(message: Message, user: User, duration: timedelta, suffix: str) 
 @router.message(Command("start", "help"))
 async def cmd_start(message: Message) -> None:
     await message.answer(
-        "✨ <b>toxiguard</b> на страже\n" "/stats /warn /unwarn /mute /unmute /top /threshold"
+        "✨ <b>toxiguard</b> на страже\n/stats /warn /unwarn /mute /unmute /top /threshold"
     )
 
 
@@ -111,9 +111,7 @@ async def cmd_stats(message: Message) -> None:
     by_cat = data.get("by_category") or {}
     cat_line = " · ".join(f"{k} {v}" for k, v in by_cat.items()) or "—"
     await message.answer(
-        f"📊 инцидентов: <b>{data['total']}</b>\n"
-        f"по типам: {cat_line}\n"
-        f"порог: <b>{thr:.2f}</b>"
+        f"📊 инцидентов: <b>{data['total']}</b>\nпо типам: {cat_line}\nпорог: <b>{thr:.2f}</b>"
     )
 
 
